@@ -9,7 +9,7 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 
-from helpers import Seeder, login, make_epub, wait_for, wait_job, wait_source_ready
+from helpers import Seeder, make_epub, wait_for, wait_job, wait_source_ready
 
 SOMBRA = "Ruiz Zafón, Carlos - [El cementerio de los libros olvidados 01] La sombra del viento (r1.3).epub"
 FUNDACION = "Asimov, Isaac/Asimov, Isaac - Fundación"
@@ -36,15 +36,13 @@ def env(tmp_path, data_dir, inbox):
         yield client, seeder, inbox, seed_root, data_dir
 
 
+def book_files(data_dir):
+    """Ficheros de libros que quedan en disco (fuera del catálogo y las portadas)."""
+    return [p for d in ("tmp", "staging") for p in (data_dir / d).rglob("*") if p.is_file()]
+
+
 def test_full_flow(env):
     client, seeder, inbox, seed_root, data_dir = env
-
-    # Sin sesión no se ve nada.
-    assert client.get("/", follow_redirects=False).status_code == 303
-    assert client.get("/api/estado").status_code == 401
-    r = client.post("/login", data={"password": "mala", "next": "/"}, follow_redirects=False)
-    assert "error=1" in r.headers["location"]
-    login(client)
 
     # Añadir la fuente e indexar.
     r = client.post("/ajustes/fuentes", data={"magnet": seeder.magnet}, follow_redirects=False)
@@ -53,8 +51,7 @@ def test_full_flow(env):
     # 3 libros reales + 40 de relleno (Fundación tiene 2 formatos; la portada no cuenta).
     assert status["books"] == 43
     # No se ha descargado ningún libro: solo el catálogo.
-    assert not any((data_dir / "cache").iterdir())
-    assert not any((data_dir / "staging").iterdir())
+    assert book_files(data_dir) == []
 
     # Búsqueda sin tildes y por autor.
     page = client.get("/", params={"q": "zafon sombra"}).text
@@ -64,6 +61,7 @@ def test_full_flow(env):
     assert "Libro de relleno" in client.get("/", params={"q": "relleno", "partial": "1"}).text
 
     db = client.app.state.db
+    library = client.app.state.library
     sombra = db.search("sombra")[0][0]
     fundacion = db.search("fundacion")[0][0]
     orwell = db.search("1984")[0][0]
@@ -88,12 +86,10 @@ def test_full_flow(env):
     assert c1.startswith("<?xml") and 'href="c2.xhtml"' in c1 and "<img" not in c1
     assert ">es</dc:language>" in opf
 
-    # Solo se ha guardado ese libro y no quedan datos temporales del torrent.
-    cached = list((data_dir / "cache").iterdir())
-    assert len(cached) == 1 and cached[0].read_bytes() == (seed_root / "Biblioteca" / SOMBRA).read_bytes()
-    wait_for(lambda: not any((data_dir / "staging").iterdir()), timeout=10)
+    # Enviado al Kindle = borrado: no queda ninguna copia ni datos del torrent.
+    wait_for(lambda: book_files(data_dir) == [], timeout=10)
 
-    # La ficha se completa con la sinopsis y la portada del EPUB.
+    # La ficha sí se completa con la sinopsis y la portada del EPUB.
     book = client.get(f"/libro/{sombra['id']}").text
     assert "Una novela sobre La sombra del viento." in book and "Editorial de Prueba" in book
     assert client.get(f"/portada/{sombra['id']}").headers["content-type"] == "image/jpeg"
@@ -107,9 +103,15 @@ def test_full_flow(env):
     ]
     for job_id in jobs:
         assert wait_job(client, job_id)["state"] == "done"
-    r = client.get(f"/descargar/{mobi['file_id']}")
+    r = client.get(f"/descargar/{mobi['file_id']}?job={jobs[0]}")
     assert r.content == (seed_root / "Biblioteca" / f"{FUNDACION}.mobi").read_bytes()
     assert "Fundacion%20-%20Isaac%20Asimov.mobi" in r.headers["content-disposition"]
+    # Entregado: caduca (DOWNLOAD_KEEP_MINUTES=0 en los tests) y se borra.
+    library.sweep()
+    assert [p.name for p in book_files(data_dir)] == [f"{jobs[1]}.mobi"]  # el otro aún no se ha recogido
+    # Un enlace caducado vuelve a preparar el libro en vez de dar error.
+    r = client.get(f"/descargar/{mobi['file_id']}?job={jobs[0]}", follow_redirects=False)
+    assert r.status_code == 303 and jobs[0] not in r.headers["location"]
 
     # Descarga sin JavaScript: redirige a una página que se refresca sola.
     epub_file = fundacion["formats"][0]
@@ -123,8 +125,8 @@ def test_full_flow(env):
     r = client.post(f"/api/libros/{orwell['id']}/kindle", json={"kindle_id": kindle["id"]})
     assert r.status_code == 400
 
-    # Quitar la fuente borra sus libros y la caché.
+    # Quitar la fuente borra sus libros y sus portadas.
     source_id = status["sources"][0]["id"]
     client.post(f"/ajustes/fuentes/{source_id}/borrar")
     assert db.count_books() == 0
-    assert not any((data_dir / "cache").iterdir())
+    assert not any((data_dir / "covers").iterdir())

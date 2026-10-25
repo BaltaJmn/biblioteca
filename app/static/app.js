@@ -46,12 +46,18 @@
 
   // ---- trabajos (descarga / envío) ------------------------------------------
   async function api(url, options = {}) {
-    const res = await fetch(url, {
-      headers: { "Content-Type": "application/json" },
-      ...options,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401) { location.href = "/login"; throw new Error("Sesión caducada"); }
+    let res;
+    try {
+      res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...options });
+    } catch {
+      // Sesión de Cloudflare Access caducada (redirige a otro dominio) o sin conexión.
+      location.reload();
+      throw new Error("Sin conexión");
+    }
+    const json = (res.headers.get("content-type") || "").includes("application/json");
+    // Si la sesión de Cloudflare Access caduca, la respuesta es su página de login.
+    if (!json || res.redirected) { location.reload(); throw new Error("Sesión caducada"); }
+    const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Algo ha fallado");
     return data;
   }
@@ -174,7 +180,7 @@
         () => api(`/api/archivos/${dl.dataset.download}/preparar`, { method: "POST" }),
         (job) => {
           reset(dl);
-          location.href = `/descargar/${job.file_id || dl.dataset.download}`;
+          location.href = `/descargar/${dl.dataset.download}?job=${job.id}`;
         },
       );
     }

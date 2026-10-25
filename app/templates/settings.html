@@ -101,15 +101,12 @@
 
   <section class="panel">
     <h2>Espacio</h2>
-    <p>Libros descargados en caché: {{ cache_count }} · {{ cache_bytes|size }} de {{ cache_max|size }}.</p>
-    <p class="muted small">Cuando se llena, se borran los que hace más tiempo que nadie pide.</p>
-    <form method="post" action="/ajustes/cache/vaciar" data-confirm="¿Vaciar la caché de libros descargados?">
-      <button class="btn ghost small" type="submit">Vaciar caché</button>
-    </form>
+    <p>El catálogo ocupa {{ catalog_bytes|size }}. Los libros no se guardan:</p>
+    <ul class="small">
+      <li>Al enviar uno al Kindle se borra en cuanto sale el correo.</li>
+      <li>Una descarga se borra {{ keep_minutes }} minutos después de entregarla (o al cabo de una hora si nadie la recoge).</li>
+    </ul>
+    <p class="muted small">Solo se conservan las portadas pequeñas y las sinopsis, para que la ficha quede completa.</p>
   </section>
-
-  {% if auth %}
-  <form method="post" action="/logout" class="logout"><button class="btn ghost small" type="submit">Cerrar sesión</button></form>
-  {% endif %}
 </div>
 {% endblock %}

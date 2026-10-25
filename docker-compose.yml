@@ -8,7 +8,8 @@ services:
     volumes:
       - biblioteca-data:/data
     ports:
-      - "8080:8080"       # en casa: http://IP-DEL-MINIPC:8080
+      # Solo desde el propio mini PC: desde fuera se entra por Cloudflare (túnel + Access).
+      - "127.0.0.1:8080:8080"
       - "6881:6881/tcp"   # BitTorrent (abrirlo en el router es opcional pero ayuda)
       - "6881:6881/udp"
 

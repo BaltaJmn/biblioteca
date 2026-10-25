@@ -2,7 +2,7 @@
 {% block title %}Preparando descarga · Biblioteca{% endblock %}
 {% block head %}
 {% if job.state == "done" %}
-<meta http-equiv="refresh" content="0; url=/descargar/{{ job.file_id or file_id }}">
+<meta http-equiv="refresh" content="0; url=/descargar/{{ file_id }}?job={{ job.id }}">
 {% elif job.state != "error" %}
 <meta http-equiv="refresh" content="3">
 {% endif %}
@@ -14,7 +14,7 @@
   <p class="error">{{ job.message }}</p>
   <a class="btn" href="/descargar/{{ file_id }}">Reintentar</a>
   {% elif job.state == "done" %}
-  <p>Listo. Si la descarga no empieza, <a href="/descargar/{{ job.file_id or file_id }}">pulsa aquí</a>.</p>
+  <p>Listo. Si la descarga no empieza, <a href="/descargar/{{ file_id }}?job={{ job.id }}">pulsa aquí</a>.</p>
   {% else %}
   <p>{{ job.message }}</p>
   <progress max="1" value="{{ job.progress }}"></progress>

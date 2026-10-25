@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import feed
-from helpers import Seeder, login, make_epub, wait_for, wait_job, wait_source_ready
+from helpers import Seeder, make_epub, wait_for, wait_job, wait_source_ready
 
 CALIBRE_SCHEMA = """
 CREATE TABLE books(id INTEGER PRIMARY KEY, title TEXT, path TEXT, series_index REAL, pubdate TEXT);
@@ -68,7 +68,6 @@ def test_calibre_library_and_restart(tmp_path, data_dir, inbox):
     from app.main import app
 
     with TestClient(app) as client:
-        login(client)
         client.post("/ajustes/fuentes", data={"magnet": seeder.magnet})
         status = wait_source_ready(client)
         assert status["books"] == 2
@@ -84,12 +83,12 @@ def test_calibre_library_and_restart(tmp_path, data_dir, inbox):
         assert fundacion["title"] == "Fundación" and fundacion["year"] is None
         assert fundacion["formats"][0]["format"] == "azw3"
         # metadata.db se descargó solo para leerlo: no queda nada en disco.
-        assert not any((data_dir / "cache").iterdir())
-        assert not any(p.name.startswith("tmp") for p in data_dir.iterdir())
+        assert not any((data_dir / "tmp").iterdir())
+        assert not any((data_dir / "staging").iterdir())
+        assert not any(p.name.startswith("tmp") and p.name != "tmp" for p in data_dir.iterdir())
 
     # Tras reiniciar no se vuelve a pedir nada al enjambre y todo sigue funcionando.
     with TestClient(app) as client:
-        login(client)
         status = client.get("/api/estado").json()
         assert status["books"] == 2 and status["sources"][0]["status"] == "ready"
         client.post("/ajustes/kindles", data={"name": "Kindle", "email": "yo@kindle.com"})
@@ -130,7 +129,6 @@ def test_book_without_peers_fails_cleanly(tmp_path, data_dir, monkeypatch):
     from app.main import app
 
     with TestClient(app) as client:
-        login(client)
         client.post("/ajustes/fuentes", data={"magnet": seeder.magnet})
         wait_source_ready(client)
         seeder.session.remove_torrent(seeder.handle)  # el único seeder desaparece

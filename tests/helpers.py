@@ -102,11 +102,6 @@ def wait_for(fn, timeout=30, interval=0.2):
     raise AssertionError("Tiempo de espera agotado")
 
 
-def login(client):
-    r = client.post("/login", data={"password": "secreto", "next": "/"}, follow_redirects=False)
-    assert r.status_code == 303 and "biblioteca_session" in r.cookies
-
-
 def wait_job(client, job_id):
     def done():
         job = client.get(f"/api/trabajos/{job_id}").json()

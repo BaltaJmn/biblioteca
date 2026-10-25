@@ -230,7 +230,6 @@ textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-siz
   background: color-mix(in srgb, var(--ok) 15%, var(--surface)); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
 }
 .notice.error { background: color-mix(in srgb, var(--err) 12%, var(--surface)); border-color: color-mix(in srgb, var(--err) 35%, transparent); }
-.logout { text-align: center; }
 
 /* Login y descarga sin JS */
 .login { max-width: 360px; margin: 48px auto; text-align: center; }

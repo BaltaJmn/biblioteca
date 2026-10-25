@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import hmac
 import logging
 import math
 import os
-import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -22,7 +26,7 @@ from pydantic import BaseModel
 from .config import Settings
 from .db import PAGE_SIZE, Database
 from .feed import check_feed, feed_loop
-from .kindle import EMAIL_RE, SendError, ascii_filename, send_email
+from .kindle import EMAIL_RE, SendError, send_email
 from .service import Library
 from .torrents import TorrentManager
 
@@ -33,8 +37,6 @@ logging.basicConfig(
 log = logging.getLogger("biblioteca")
 
 BASE_DIR = Path(__file__).parent
-COOKIE = "biblioteca_session"
-PUBLIC_PATHS = ("/login", "/static/", "/healthz")
 
 
 @asynccontextmanager
@@ -57,11 +59,13 @@ async def lifespan(app: FastAPI):
     app.state.db = db
     app.state.torrents = torrents
     app.state.library = Library(settings, db, torrents)
+    app.state.library.start()
     try:
         yield
     finally:
         if feed_task:
             feed_task.cancel()
+        await app.state.library.stop()
         await torrents.stop()
 
 
@@ -98,60 +102,23 @@ templates.env.filters["language"] = lambda code: LANGUAGE_NAMES.get(
 )
 
 
-# ---- autenticación -----------------------------------------------------------
+# ---- acceso -----------------------------------------------------------------
 
-
-def _token(settings: Settings) -> str:
-    key = (settings.secret_key + settings.app_password).encode()
-    return hmac.new(key, b"biblioteca-session-v1", hashlib.sha256).hexdigest()
+# Cloudflare Access añade estas cabeceras a cada petición que ha pasado su login.
+ACCESS_HEADERS = ("cf-access-jwt-assertion", "cf-access-authenticated-user-email")
 
 
 @app.middleware("http")
-async def auth_middleware(request: Request, call_next):
+async def require_cloudflare_access(request: Request, call_next):
+    """Red de seguridad: si Access no está delante (mal configurado), no se sirve nada."""
     settings: Settings = request.app.state.settings
-    path = request.url.path
-    if settings.app_password and not path.startswith(PUBLIC_PATHS):
-        cookie = request.cookies.get(COOKIE, "")
-        if not hmac.compare_digest(cookie, _token(settings)):
-            if path.startswith("/api/"):
-                return JSONResponse({"detail": "No autorizado"}, status_code=401)
-            target = path + (f"?{request.url.query}" if request.url.query else "")
-            return RedirectResponse(f"/login?{urlencode({'next': target})}", status_code=303)
+    if settings.require_access and request.url.path != "/healthz":
+        if not any(h in request.headers for h in ACCESS_HEADERS):
+            log.warning("Petición sin Cloudflare Access bloqueada: %s", request.url.path)
+            return PlainTextResponse(
+                "Esta web solo está disponible a través de Cloudflare Access.", status_code=403
+            )
     return await call_next(request)
-
-
-@app.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request, next: str = "/", error: str = ""):
-    return templates.TemplateResponse(
-        request, "login.html", {"next": next, "error": error, "page": "login"}
-    )
-
-
-@app.post("/login")
-async def login(request: Request, password: str = Form(...), next: str = Form("/")):
-    settings: Settings = request.app.state.settings
-    if not settings.app_password or not hmac.compare_digest(password, settings.app_password):
-        await asyncio.sleep(1.5)  # frena ataques de fuerza bruta
-        return RedirectResponse(f"/login?{urlencode({'next': next, 'error': '1'})}", status_code=303)
-    # Solo rutas locales: "//host" o "/\\host" llevarían a otra web.
-    target = next if re.match(r"^/(?![/\\])", next) else "/"
-    response = RedirectResponse(target, status_code=303)
-    response.set_cookie(
-        COOKIE,
-        _token(settings),
-        max_age=365 * 24 * 3600,
-        httponly=True,
-        samesite="lax",
-        secure=request.url.scheme == "https",
-    )
-    return response
-
-
-@app.post("/logout")
-async def logout():
-    response = RedirectResponse("/login", status_code=303)
-    response.delete_cookie(COOKIE)
-    return response
 
 
 @app.get("/healthz")
@@ -265,26 +232,23 @@ async def api_job(request: Request, job_id: str):
 
 @app.get("/descargar/{file_id}")
 async def download(request: Request, file_id: int, job: str = ""):
-    db: Database = request.app.state.db
-    file_row = db.file(file_id)
-    if file_row is None:
-        raise HTTPException(404, "Fichero no encontrado")
-    cached = db.cached_path(file_id)
-    if cached and Path(cached).exists():
-        book = db.book(file_row["book_id"])
-        name = ascii_filename(book["title"], book["authors"], file_row["format"])
-        return FileResponse(cached, filename=name)
-    # Sin JavaScript (p. ej. navegador del Kindle): página que se recarga sola.
     library: Library = request.app.state.library
-    state = library.job(job) if job else None
-    if state is None:
-        new_job = library.start_download(file_id)
-        return RedirectResponse(f"/descargar/{file_id}?job={new_job.id}", status_code=303)
-    return templates.TemplateResponse(
-        request,
-        "preparing.html",
-        {"job": state, "file_id": file_id, "page": "preparing"},
-    )
+    if job:
+        ready = library.take_download(job)
+        if ready:
+            path, name = ready
+            return FileResponse(path, filename=name)
+        state = library.job(job)
+        if state and state["state"] != "done":
+            # Sin JavaScript: página que se recarga sola hasta que el libro está listo.
+            return templates.TemplateResponse(
+                request, "preparing.html", {"job": state, "file_id": file_id, "page": "preparing"}
+            )
+    # Sin trabajo (o ya caducado): se descarga de nuevo.
+    if request.app.state.db.file(file_id) is None:
+        raise HTTPException(404, "Fichero no encontrado")
+    new_job = library.start_download(file_id)
+    return RedirectResponse(f"/descargar/{file_id}?job={new_job.id}", status_code=303)
 
 
 # ---- ajustes -----------------------------------------------------------------
@@ -295,24 +259,24 @@ async def settings_page(request: Request, msg: str = "", error: str = ""):
     db: Database = request.app.state.db
     torrents: TorrentManager = request.app.state.torrents
     sources = [dict(s) | {"progress": torrents.source_progress(s["id"])} for s in db.sources()]
-    cache_count, cache_bytes = db.cache_usage()
     settings: Settings = request.app.state.settings
+    catalog_bytes = sum(
+        f.stat().st_size for f in settings.data_dir.glob("biblioteca.db*")
+    ) + sum(f.stat().st_size for f in settings.torrents_dir.glob("*.torrent"))
     return templates.TemplateResponse(
         request,
         "settings.html",
         {
             "sources": sources,
             "busy": any(s["status"] not in ("ready", "error") for s in sources),
-            "cache_count": cache_count,
-            "cache_bytes": cache_bytes,
-            "cache_max": settings.cache_max_mb * 1024 * 1024,
+            "catalog_bytes": catalog_bytes,
+            "keep_minutes": settings.download_keep_minutes,
             "smtp_from": settings.smtp_from,
             "feed_url": settings.feed_url,
             "stats": torrents.stats(),
             "total_books": db.count_books(),
             "msg": msg,
             "error": error,
-            "auth": bool(settings.app_password),
             "page": "settings",
             **_kindle_context(request),
         },
@@ -370,12 +334,6 @@ async def run_feed(request: Request):
     except Exception as exc:
         return _back(error=f"No se pudo leer el feed: {exc}")
     return _back(msg=f"Feed comprobado: {added} fuente(s) nueva(s)")
-
-
-@app.post("/ajustes/cache/vaciar")
-async def clear_cache(request: Request):
-    request.app.state.torrents.clear_cache()
-    return _back(msg="Caché vaciada")
 
 
 @app.post("/ajustes/correo/probar")

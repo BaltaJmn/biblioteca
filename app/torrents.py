@@ -1,9 +1,9 @@
 """Gestor BitTorrent: catálogo a partir de magnets y descarga de libros bajo demanda.
 
 Nunca se descarga el torrent completo. Para cada petición se añade el torrent
-con todos los ficheros desactivados salvo el pedido; al terminar se copia a la
-caché y se elimina el torrent junto con sus datos temporales. Así el disco solo
-guarda el catálogo (SQLite) y los libros que alguien ha pedido.
+con todos los ficheros desactivados salvo el pedido; al terminar se copia donde
+se necesite y se elimina el torrent junto con sus datos temporales. Así el disco
+solo guarda el catálogo (SQLite).
 """
 
 from __future__ import annotations
@@ -104,7 +104,6 @@ class TorrentManager:
         self.session: lt.session | None = None
         self._active: dict[int, _Active] = {}
         self._source_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._file_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._waiters: dict[tuple[str, str], list[asyncio.Future]] = defaultdict(list)
         self._errors: dict[str, str] = {}
         self._progress: dict[int, dict] = {}
@@ -138,10 +137,11 @@ class TorrentManager:
 
     async def start(self) -> None:
         s = self.settings
-        shutil.rmtree(s.staging_dir, ignore_errors=True)
-        for d in (s.staging_dir, s.torrents_dir, s.cache_dir, s.covers_dir):
+        # Restos de una ejecución anterior (descargas a medias, envíos interrumpidos).
+        for d in (s.staging_dir, s.temp_dir):
+            shutil.rmtree(d, ignore_errors=True)
+        for d in (s.staging_dir, s.temp_dir, s.torrents_dir, s.covers_dir):
             d.mkdir(parents=True, exist_ok=True)
-        self._sweep_cache_dir()
         params = None
         if self._state_file.exists():
             try:
@@ -236,12 +236,6 @@ class TorrentManager:
 
     def _staging(self, infohash: str) -> Path:
         return self.settings.staging_dir / infohash
-
-    def _sweep_cache_dir(self) -> None:
-        known = {Path(r["path"]).name for r in self.db.cache_entries_lru()}
-        for path in self.settings.cache_dir.iterdir():
-            if path.name not in known:
-                path.unlink(missing_ok=True)
 
     def _params(self, src, priorities: dict[int, int] | None) -> lt.add_torrent_params:
         atp = lt.parse_magnet_uri(src["magnet"])
@@ -377,19 +371,12 @@ class TorrentManager:
 
     # ---- descargas ----------------------------------------------------------
 
-    async def fetch(self, file_row, progress: Callable[[dict], None] | None = None) -> Path:
-        """Garantiza que el fichero está en la caché y devuelve su ruta."""
-        file_id = file_row["id"]
-        async with self._file_locks[file_id]:
-            cached = self.db.cached_path(file_id)
-            if cached and Path(cached).exists():
-                return Path(cached)
-            src = self.db.source(file_row["source_id"])
-            dest = self.settings.cache_dir / f"{file_id}.{file_row['format']}"
-            await self._download_to(src, file_row["file_index"], file_row["size"], dest, progress)
-            self.db.add_cached(file_id, str(dest), dest.stat().st_size)
-            self._evict(keep=file_id)
-            return dest
+    async def download(
+        self, file_row, dest: Path, progress: Callable[[dict], None] | None = None
+    ) -> None:
+        """Descarga un único fichero del torrent en ``dest``."""
+        src = self.db.source(file_row["source_id"])
+        await self._download_to(src, file_row["file_index"], file_row["size"], dest, progress)
 
     async def _download_to(self, src, index: int, size: int, dest: Path, progress) -> None:
         source_id, infohash = src["id"], src["infohash"]
@@ -473,33 +460,14 @@ class TorrentManager:
                 )
             await asyncio.sleep(0.5)
 
-    # ---- caché --------------------------------------------------------------
-
-    def _evict(self, keep: int | None = None) -> None:
-        limit = self.settings.cache_max_mb * 1024 * 1024
-        entries = self.db.cache_entries_lru()
-        total = sum(e["size"] for e in entries)
-        for entry in entries:
-            if total <= limit:
-                break
-            if entry["file_id"] == keep:
-                continue
-            Path(entry["path"]).unlink(missing_ok=True)
-            self.db.remove_cached(entry["file_id"])
-            total -= entry["size"]
-
-    def clear_cache(self) -> None:
-        for path in self.db.clear_cache():
-            Path(path).unlink(missing_ok=True)
-
     async def remove_source(self, source_id: int) -> None:
         src = self.db.source(source_id)
         if src is None:
             return
         async with self._source_locks[source_id]:
             await self._remove(source_id, src["infohash"])
-        for path in await asyncio.to_thread(self.db.delete_source, source_id):
-            Path(path).unlink(missing_ok=True)
+        for book_id in await asyncio.to_thread(self.db.delete_source, source_id):
+            (self.settings.covers_dir / f"{book_id}.jpg").unlink(missing_ok=True)
         self._torrent_file(src["infohash"]).unlink(missing_ok=True)
 
     def stats(self) -> dict:

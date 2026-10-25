@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,9 +32,8 @@ def _list(name: str) -> list[str]:
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
-    app_password: str
-    secret_key: str
-    cache_max_mb: int
+    require_access: bool
+    download_keep_minutes: int
     # BitTorrent
     listen_interfaces: str
     enable_dht: bool
@@ -69,8 +67,8 @@ class Settings:
         return self.data_dir / "staging"
 
     @property
-    def cache_dir(self) -> Path:
-        return self.data_dir / "cache"
+    def temp_dir(self) -> Path:
+        return self.data_dir / "tmp"
 
     @property
     def covers_dir(self) -> Path:
@@ -84,24 +82,14 @@ class Settings:
     def from_env(cls) -> "Settings":
         data_dir = Path(os.environ.get("DATA_DIR", "./data")).resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
-        secret = os.environ.get("SECRET_KEY", "").strip()
-        if not secret:
-            # Se genera una vez y se guarda para que las sesiones sobrevivan a reinicios.
-            key_file = data_dir / "secret.key"
-            if key_file.exists():
-                secret = key_file.read_text().strip()
-            else:
-                secret = secrets.token_hex(32)
-                key_file.write_text(secret)
         security = os.environ.get("SMTP_SECURITY", "starttls").strip().lower()
         if security not in {"starttls", "ssl", "none"}:
             raise ValueError("SMTP_SECURITY debe ser starttls, ssl o none")
         port = _int("TORRENT_PORT", 6881)
         return cls(
             data_dir=data_dir,
-            app_password=os.environ.get("APP_PASSWORD", ""),
-            secret_key=secret,
-            cache_max_mb=_int("CACHE_MAX_MB", 1024),
+            require_access=_bool("CLOUDFLARE_ACCESS_REQUIRED", True),
+            download_keep_minutes=_int("DOWNLOAD_KEEP_MINUTES", 10),
             listen_interfaces=os.environ.get(
                 "TORRENT_LISTEN_INTERFACES", f"0.0.0.0:{port},[::]:{port}"
             ),

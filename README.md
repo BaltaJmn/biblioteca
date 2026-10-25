@@ -6,7 +6,9 @@ mini PC con Docker y publicada en `https://biblioteca.baltajmn.dev`.
 
 - **Ocupa muy poco.** Nunca descarga el torrent entero. Solo lee la lista de
   ficheros para montar el catálogo y, cuando alguien pide un libro, descarga
-  **solo ese libro**.
+  **solo ese libro**. Tampoco guarda libros: se borran en cuanto llegan al Kindle.
+- **Sin contraseñas propias.** Quién entra lo decide Cloudflare Access, igual que
+  en el resto de webs de `baltajmn.dev`.
 - **Buscador rápido** por título, autor o serie, sin importar las tildes. Funciona
   en el móvil y se puede instalar como app en la pantalla de inicio.
 - **Enviar al Kindle.** Antes de enviarlo por correo a tu dirección `@kindle.com`,
@@ -31,13 +33,15 @@ flowchart LR
    ficheros, unos pocos MB) y se genera un catálogo SQLite con búsqueda de texto
    completo.
 2. Cuando pulsas **Enviar al Kindle** o **Descargar**, la app añade el torrent con
-   todos los ficheros desactivados salvo ese libro, lo descarga, lo guarda en una
-   caché y borra los datos temporales.
-3. Los libros ya pedidos quedan en caché, así que la segunda vez salen al
-   instante. Cuando la caché llega al límite, se borran los que hace más tiempo
-   que nadie pide.
-4. La primera vez que se descarga un EPUB se extraen su portada y su sinopsis
-   para completar la ficha.
+   todos los ficheros desactivados salvo ese libro y lo descarga en una carpeta
+   temporal.
+3. **Enviar al Kindle:** en cuanto sale el correo se borran el libro y los datos
+   temporales del torrent. **Descargar:** el fichero se borra
+   `DOWNLOAD_KEEP_MINUTES` minutos (10 por defecto) después de entregarlo al
+   navegador, o al cabo de una hora si nadie lo recoge. Si vuelves a pedir el
+   mismo libro, se descarga otra vez.
+4. Lo único que se conserva de cada libro pedido es una portada pequeña (unos
+   20 KB) y la sinopsis, para que la ficha quede completa.
 
 Medido con un torrent simulado de **150.000 libros (165 GB)**:
 
@@ -46,7 +50,7 @@ Medido con un torrent simulado de **150.000 libros (165 GB)**:
 | Catálogo en disco | **51 MB** |
 | Indexado inicial | 16 s |
 | Búsqueda | 30–50 ms |
-| Caché de libros | la que elijas (`CACHE_MAX_MB`, 1 GB por defecto ≈ 1.000–2.000 libros) |
+| Libros guardados | ninguno (solo los que se están enviando en ese momento) |
 
 ## Instalación en el mini PC
 
@@ -64,10 +68,10 @@ nano .env
 
 Los valores importantes son estos:
 
-- `APP_PASSWORD`: la contraseña de la web (compartida por toda la casa).
 - `MAGNETS`: el magnet del catálogo. También lo puedes añadir luego desde **Ajustes**.
 - `SMTP_*`: el correo desde el que se envía a los Kindle (ver el paso 2).
-- `CLOUDFLARE_TUNNEL_TOKEN`: el token del túnel (ver el paso 3).
+- `COMPOSE_PROFILES` y `CLOUDFLARE_TUNNEL_TOKEN`: solo si usas el túnel incluido
+  (ver el paso 3).
 
 ### 2. Correo para Send to Kindle
 
@@ -80,21 +84,37 @@ Los valores importantes son estos:
    - en **Lista de e-mails aprobados**, añade tu `SMTP_FROM`. Si no está ahí,
      Amazon descarta los envíos sin avisar.
 
-### 3. Publicarlo en biblioteca.baltajmn.dev (Cloudflare Tunnel)
+### 3. Publicarlo en biblioteca.baltajmn.dev (Cloudflare Tunnel + Access)
 
-No hace falta abrir puertos en el router:
+La app no tiene usuarios ni contraseña: se entra solo a través de Cloudflare
+Access. Por seguridad, **rechaza cualquier petición que no venga autenticada por
+Access** (error 403), y el puerto 8080 solo escucha en el propio mini PC. Así, si
+Access se desconfigura algún día, la biblioteca no queda abierta a Internet.
 
-1. En <https://one.dash.cloudflare.com> ve a **Networks → Tunnels → Create a
-   tunnel**, elige **Cloudflared** y llámalo `biblioteca`.
-2. Copia el token que aparece en el comando de instalación (lo que va después de
-   `--token`) y pégalo en `CLOUDFLARE_TUNNEL_TOKEN` del `.env`. No hace falta
-   instalar nada más: el contenedor `cloudflared` ya está en el `docker-compose.yml`.
-3. En **Public Hostname** añade el subdominio `biblioteca`, el dominio
-   `baltajmn.dev` y el servicio `HTTP` → `biblioteca:8080`.
-4. **Recomendado:** en **Access → Applications → Add an application →
-   Self-hosted**, protege `biblioteca.baltajmn.dev` con una política *Allow* que
-   incluya solo los correos de la familia (entran con un código que les llega por
-   correo). Así nadie de fuera llega ni a ver la página de login.
+**Túnel.** Elige una de estas dos opciones:
+
+- **Ya tienes un túnel para tus otras webs** (lo normal). En
+  <https://one.dash.cloudflare.com> → **Networks → Tunnels → (tu túnel) → Public
+  Hostname**, añade el subdominio `biblioteca`, el dominio `baltajmn.dev` y este
+  servicio:
+  - `HTTP` → `localhost:8080` si `cloudflared` está instalado en el sistema del
+    mini PC;
+  - si tu `cloudflared` corre en otro contenedor Docker, conéctalo a la red de
+    este proyecto (`docker network connect biblioteca_default <contenedor>`) y
+    usa `HTTP` → `biblioteca:8080`.
+
+  En el `.env`, deja `COMPOSE_PROFILES` vacío para no arrancar un segundo túnel.
+- **Túnel nuevo solo para la biblioteca.** Crea un túnel (**Networks → Tunnels →
+  Create a tunnel → Cloudflared**) y copia el token que aparece después de
+  `--token` en `CLOUDFLARE_TUNNEL_TOKEN`, con `COMPOSE_PROFILES=tunnel`. El
+  contenedor `cloudflared` ya está en el `docker-compose.yml`. En **Public
+  Hostname** usa `biblioteca.baltajmn.dev` → `HTTP` → `biblioteca:8080`.
+
+**Access (obligatorio).** En **Access → Applications → Add an application →
+Self-hosted**, añade `biblioteca.baltajmn.dev`. Puedes reutilizar la política que
+ya usas en las otras webs, o crear una *Allow* con los correos que quieras dejar
+entrar. **Para dar acceso a alguien nuevo, añade su correo a esa política en
+Cloudflare**: la app no guarda ninguna lista de usuarios.
 
 ### 4. Arrancar
 
@@ -103,10 +123,10 @@ docker compose up -d --build
 docker compose logs -f biblioteca   # para ver qué hace
 ```
 
-Abre `https://biblioteca.baltajmn.dev` (o `http://IP-DEL-MINIPC:8080` desde casa).
-En **Ajustes**:
+Abre `https://biblioteca.baltajmn.dev`. En **Ajustes**:
 
-1. Añade los Kindles (nombre + dirección `@kindle.com`).
+1. Añade los Kindles de cada persona (nombre + dirección `@kindle.com`). Puedes
+   añadir todos los que quieras; al enviar un libro se elige a cuál.
 2. Si no lo pusiste en `MAGNETS`, pega el magnet. Pasará por *Obteniendo lista de
    ficheros* → *Indexando* → *Listo*. El primer paso puede tardar unos minutos,
    según cuánta gente esté compartiendo el torrent.
@@ -138,7 +158,7 @@ No es imprescindible, pero así se conecta a más gente y las descargas van más
 
 ## Copia de seguridad
 
-Todo vive en el volumen `biblioteca-data`: catálogo, Kindles, portadas y caché.
+Todo vive en el volumen `biblioteca-data`: catálogo, Kindles y portadas.
 
 ```bash
 docker run --rm -v biblioteca_biblioteca-data:/data -v "$PWD":/backup alpine \
@@ -153,6 +173,7 @@ docker run --rm -v biblioteca_biblioteca-data:/data -v "$PWD":/backup alpine \
 | Se queda en «Obteniendo lista de ficheros» | Todavía no ha encontrado a nadie con el torrent. Revisa los logs y la conexión; el número de conexiones aparece en Ajustes. |
 | El libro no llega al Kindle | Comprueba que `SMTP_FROM` está en la lista de e-mails aprobados de Amazon y revisa el correo: Amazon avisa cuando no puede convertir un documento. El límite es 25 MB por libro. |
 | El botón Kindle está desactivado | Ese libro solo está en MOBI/AZW3, formatos que Amazon ya no acepta por correo. Puedes descargarlo y pasarlo por cable. |
+| «Esta web solo está disponible a través de Cloudflare Access» | La petición llegó sin pasar por Access: revisa que la aplicación de Access cubre `biblioteca.baltajmn.dev`. |
 | Avisos de `portmap`/UPnP en los logs | Son normales en Docker: el reenvío automático de puertos no funciona dentro del contenedor. |
 
 ## Desarrollo
@@ -160,8 +181,8 @@ docker run --rm -v biblioteca_biblioteca-data:/data -v "$PWD":/backup alpine \
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest                                   # 25 tests, sin conexión a Internet
-DATA_DIR=./data uvicorn app.main:app --reload --port 8080
+pytest                                   # 21 tests, sin conexión a Internet
+DATA_DIR=./data CLOUDFLARE_ACCESS_REQUIRED=false uvicorn app.main:app --reload --port 8080
 ```
 
 Los tests montan un *seeder* BitTorrent local con una biblioteca falsa y un
@@ -173,7 +194,7 @@ Estructura:
 
 ```
 app/
-  main.py       rutas web, login y ajustes
+  main.py       rutas web, ajustes y comprobación de Cloudflare Access
   torrents.py   sesión libtorrent: metadatos y descargas bajo demanda
   indexer.py    ficheros del torrent → libros (con soporte de Calibre)
   parsing.py    título/autor/serie a partir del nombre del fichero
@@ -191,5 +212,5 @@ cuenta que la mayoría de los libros de las colecciones que circulan por Telegra
 tienen derechos de autor, y que en España descargarlos y compartirlos por
 BitTorrent sin permiso no está cubierto por la copia privada. Mientras se
 descarga un libro, BitTorrent también sube trozos a otras personas
-(`TORRENT_UPLOAD_LIMIT_KBPS` lo limita). Mantén la web privada, con contraseña y
-Cloudflare Access: abrirla al público sería redistribuir los libros.
+(`TORRENT_UPLOAD_LIMIT_KBPS` lo limita). Mantén la web privada con Cloudflare
+Access: abrirla al público sería redistribuir los libros.

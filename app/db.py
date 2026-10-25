@@ -56,12 +56,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS books_fts USING fts5(
     content='books', content_rowid='id',
     tokenize="unicode61 remove_diacritics 2"
 );
-CREATE TABLE IF NOT EXISTS cache(
-    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-    path TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    last_access REAL NOT NULL
-);
 CREATE TABLE IF NOT EXISTS kindles(
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -134,37 +128,19 @@ class Database:
                 f"UPDATE sources SET {assignments} WHERE id=?", (*fields.values(), source_id)
             )
 
-    def delete_source(self, source_id: int) -> list[str]:
-        """Borra la fuente y los libros que solo estaban en ella.
-
-        Los libros ya descargados que también estén en otra fuente conservan
-        su copia en caché. Devuelve las rutas que hay que eliminar del disco."""
-        orphaned = []
+    def delete_source(self, source_id: int) -> list[int]:
+        """Borra la fuente y los libros que solo estaban en ella (devuelve sus id)."""
         with self.connect() as conn:
-            cached = conn.execute(
-                "SELECT c.file_id, c.path, f.book_id, f.format FROM cache c"
-                " JOIN files f ON f.id=c.file_id WHERE f.source_id=?",
-                (source_id,),
-            ).fetchall()
-            for row in cached:
-                other = conn.execute(
-                    "SELECT f.id FROM files f LEFT JOIN cache c ON c.file_id=f.id"
-                    " WHERE f.book_id=? AND f.format=? AND f.source_id<>? AND c.file_id IS NULL",
-                    (row["book_id"], row["format"], source_id),
-                ).fetchone()
-                if other:
-                    conn.execute(
-                        "UPDATE cache SET file_id=? WHERE file_id=?", (other[0], row["file_id"])
-                    )
-                else:
-                    conn.execute("DELETE FROM cache WHERE file_id=?", (row["file_id"],))
-                    orphaned.append(row["path"])
             conn.execute("DELETE FROM sources WHERE id=?", (source_id,))
-            conn.execute(
-                "DELETE FROM books WHERE NOT EXISTS (SELECT 1 FROM files WHERE book_id=books.id)"
-            )
+            orphans = [
+                r[0]
+                for r in conn.execute(
+                    "DELETE FROM books WHERE NOT EXISTS"
+                    " (SELECT 1 FROM files WHERE book_id=books.id) RETURNING id"
+                )
+            ]
             conn.execute("INSERT INTO books_fts(books_fts) VALUES('rebuild')")
-        return orphaned
+        return orphans
 
     def feed_seen(self, infohash: str) -> bool:
         with self.connect() as conn:
@@ -244,11 +220,10 @@ class Database:
         placeholders = ",".join("?" * len(by_id))
         # Un fichero por formato: el de la fuente más reciente.
         rows = conn.execute(
-            "SELECT f.book_id, f.format, f.id, f.size, c.file_id IS NOT NULL AS cached"
+            "SELECT f.book_id, f.format, f.id, f.size"
             " FROM files f JOIN sources s ON s.id = f.source_id"
-            " LEFT JOIN cache c ON c.file_id = f.id"
             f" WHERE f.book_id IN ({placeholders})"
-            " ORDER BY c.file_id IS NULL, s.added_at DESC",
+            " ORDER BY s.added_at DESC",
             tuple(by_id),
         ).fetchall()
         seen = set()
@@ -257,7 +232,7 @@ class Database:
                 continue
             seen.add((r["book_id"], r["format"]))
             by_id[r["book_id"]]["formats"].append(
-                {"format": r["format"], "file_id": r["id"], "size": r["size"], "cached": bool(r["cached"])}
+                {"format": r["format"], "file_id": r["id"], "size": r["size"]}
             )
         rank = {f: i for i, f in enumerate(FORMAT_PREFERENCE)}
         for b in books:
@@ -267,14 +242,11 @@ class Database:
             )
 
     def files_for_book(self, book_id: int, fmt: str) -> list[sqlite3.Row]:
-        """Ficheros candidatos de un libro y formato: primero el cacheado,
-        luego los de las fuentes más recientes."""
+        """Ficheros candidatos de un libro y formato, de la fuente más reciente a la más antigua."""
         with self.connect() as conn:
             return conn.execute(
                 "SELECT f.*, s.infohash FROM files f JOIN sources s ON s.id=f.source_id"
-                " LEFT JOIN cache c ON c.file_id=f.id"
-                " WHERE f.book_id=? AND f.format=?"
-                " ORDER BY c.file_id IS NULL, s.added_at DESC",
+                " WHERE f.book_id=? AND f.format=? ORDER BY s.added_at DESC",
                 (book_id, fmt),
             ).fetchall()
 
@@ -296,43 +268,6 @@ class Database:
         )
         with self.connect() as conn:
             conn.execute(f"UPDATE books SET {assignments} WHERE id=?", (*fields.values(), book_id))
-
-    # ---- caché de ficheros descargados ---------------------------------------
-
-    def cached_path(self, file_id: int) -> str | None:
-        with self.connect() as conn:
-            row = conn.execute("SELECT path FROM cache WHERE file_id=?", (file_id,)).fetchone()
-            if row:
-                conn.execute(
-                    "UPDATE cache SET last_access=? WHERE file_id=?", (time.time(), file_id)
-                )
-            return row[0] if row else None
-
-    def add_cached(self, file_id: int, path: str, size: int) -> None:
-        with self.connect() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO cache(file_id, path, size, last_access) VALUES(?,?,?,?)",
-                (file_id, path, size, time.time()),
-            )
-
-    def remove_cached(self, file_id: int) -> None:
-        with self.connect() as conn:
-            conn.execute("DELETE FROM cache WHERE file_id=?", (file_id,))
-
-    def cache_entries_lru(self) -> list[sqlite3.Row]:
-        with self.connect() as conn:
-            return conn.execute("SELECT * FROM cache ORDER BY last_access").fetchall()
-
-    def cache_usage(self) -> tuple[int, int]:
-        with self.connect() as conn:
-            row = conn.execute("SELECT count(*), COALESCE(sum(size), 0) FROM cache").fetchone()
-            return row[0], row[1]
-
-    def clear_cache(self) -> list[str]:
-        with self.connect() as conn:
-            paths = [r[0] for r in conn.execute("SELECT path FROM cache")]
-            conn.execute("DELETE FROM cache")
-            return paths
 
     # ---- kindles --------------------------------------------------------------
 
