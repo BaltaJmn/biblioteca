@@ -160,7 +160,7 @@ docker run --rm -v biblioteca_biblioteca-data:/data -v "$PWD":/backup alpine \
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
-pytest                                   # 24 tests, sin conexión a Internet
+pytest                                   # 25 tests, sin conexión a Internet
 DATA_DIR=./data uvicorn app.main:app --reload --port 8080
 ```
 

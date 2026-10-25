@@ -137,20 +137,34 @@ class Database:
     def delete_source(self, source_id: int) -> list[str]:
         """Borra la fuente y los libros que solo estaban en ella.
 
-        Devuelve las rutas de caché que hay que eliminar del disco."""
+        Los libros ya descargados que también estén en otra fuente conservan
+        su copia en caché. Devuelve las rutas que hay que eliminar del disco."""
+        orphaned = []
         with self.connect() as conn:
             cached = conn.execute(
-                "SELECT c.file_id, c.path FROM cache c JOIN files f ON f.id=c.file_id"
-                " WHERE f.source_id=?",
+                "SELECT c.file_id, c.path, f.book_id, f.format FROM cache c"
+                " JOIN files f ON f.id=c.file_id WHERE f.source_id=?",
                 (source_id,),
             ).fetchall()
-            conn.executemany("DELETE FROM cache WHERE file_id=?", [(r[0],) for r in cached])
+            for row in cached:
+                other = conn.execute(
+                    "SELECT f.id FROM files f LEFT JOIN cache c ON c.file_id=f.id"
+                    " WHERE f.book_id=? AND f.format=? AND f.source_id<>? AND c.file_id IS NULL",
+                    (row["book_id"], row["format"], source_id),
+                ).fetchone()
+                if other:
+                    conn.execute(
+                        "UPDATE cache SET file_id=? WHERE file_id=?", (other[0], row["file_id"])
+                    )
+                else:
+                    conn.execute("DELETE FROM cache WHERE file_id=?", (row["file_id"],))
+                    orphaned.append(row["path"])
             conn.execute("DELETE FROM sources WHERE id=?", (source_id,))
             conn.execute(
                 "DELETE FROM books WHERE NOT EXISTS (SELECT 1 FROM files WHERE book_id=books.id)"
             )
             conn.execute("INSERT INTO books_fts(books_fts) VALUES('rebuild')")
-        return [r[1] for r in cached]
+        return orphaned
 
     def feed_seen(self, infohash: str) -> bool:
         with self.connect() as conn:
