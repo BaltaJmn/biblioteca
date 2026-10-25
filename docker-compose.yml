@@ -1,0 +1,29 @@
+services:
+  biblioteca:
+    build: .
+    image: biblioteca:latest
+    container_name: biblioteca
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - biblioteca-data:/data
+    ports:
+      - "8080:8080"       # en casa: http://IP-DEL-MINIPC:8080
+      - "6881:6881/tcp"   # BitTorrent (abrirlo en el router es opcional pero ayuda)
+      - "6881:6881/udp"
+
+  # Publica la web en https://biblioteca.baltajmn.dev sin abrir puertos en el router.
+  # Se activa con COMPOSE_PROFILES=tunnel en el .env.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    container_name: biblioteca-tunnel
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - biblioteca
+
+volumes:
+  biblioteca-data:

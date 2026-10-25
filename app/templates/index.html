@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{% if q %}{{ q }} · {% endif %}Biblioteca{% endblock %}
+{% block content %}
+<section class="hero{% if searching %} compact{% endif %}">
+  {% if not searching %}<h1>¿Qué te apetece leer?</h1>{% endif %}
+  <form class="search" action="/" method="get" role="search" id="search-form">
+    <input type="search" name="q" value="{{ q }}" placeholder="Título, autor o serie…"
+           autocomplete="off" aria-label="Buscar libros" {% if not searching %}autofocus{% endif %}>
+    {% if autor %}<input type="hidden" name="autor" value="{{ autor }}">{% endif %}
+    {% if serie %}<input type="hidden" name="serie" value="{{ serie }}">{% endif %}
+    <button type="submit">Buscar</button>
+  </form>
+  {% if autor or serie %}
+  <p class="filters">
+    {% if autor %}<a class="chip" href="/?{{ {'q': q, 'serie': serie}|urlencode }}" title="Quitar filtro">Autor: {{ autor }} ✕</a>{% endif %}
+    {% if serie %}<a class="chip" href="/?{{ {'q': q, 'autor': autor}|urlencode }}" title="Quitar filtro">Serie: {{ serie }} ✕</a>{% endif %}
+  </p>
+  {% endif %}
+</section>
+<section id="results">
+  {% include "_results.html" %}
+</section>
+{% endblock %}

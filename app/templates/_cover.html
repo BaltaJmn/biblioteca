@@ -1,0 +1,8 @@
+<a class="cover{% if big %} big{% endif %}" href="/libro/{{ b.id }}" style="--h: {{ (b.authors ~ b.title)|hue }}" tabindex="-1" aria-hidden="true">
+  {% if b.has_cover %}
+  <img src="/portada/{{ b.id }}" alt="" loading="lazy">
+  {% else %}
+  <span class="cover-title">{{ b.title }}</span>
+  {% if b.authors %}<span class="cover-author">{{ b.authors.split(" & ")[0] }}</span>{% endif %}
+  {% endif %}
+</a>

@@ -1,0 +1,31 @@
+{% if not sources %}
+<div class="empty">
+  <p>Todavía no hay ningún catálogo cargado.</p>
+  <a class="btn" href="/ajustes">Añadir un magnet en Ajustes</a>
+</div>
+{% elif not books and searching %}
+<div class="empty">
+  <p>No hay resultados{% if q %} para «{{ q }}»{% endif %}.</p>
+  <p class="muted">Prueba con menos palabras o solo con el apellido del autor.</p>
+</div>
+{% elif not books %}
+<div class="empty">
+  <p>El catálogo se está preparando…</p>
+  <a class="btn ghost" href="/ajustes">Ver estado</a>
+</div>
+{% else %}
+<p class="count">
+  {% if searching %}{{ total }} {{ "resultado" if total == 1 else "resultados" }}
+  {% else %}Últimos añadidos · {{ total }} libros en el catálogo{% endif %}
+</p>
+<ul class="grid">
+  {% for b in books %}{% include "_card.html" %}{% endfor %}
+</ul>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Páginas">
+  {% if page_num > 1 %}<a class="btn ghost" href="/?{{ query_string }}{% if query_string %}&{% endif %}p={{ page_num - 1 }}">← Anterior</a>{% endif %}
+  <span>Página {{ page_num }} de {{ pages }}</span>
+  {% if page_num < pages %}<a class="btn ghost" href="/?{{ query_string }}{% if query_string %}&{% endif %}p={{ page_num + 1 }}">Siguiente →</a>{% endif %}
+</nav>
+{% endif %}
+{% endif %}

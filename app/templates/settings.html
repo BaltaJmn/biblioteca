@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Ajustes · Biblioteca{% endblock %}
+{% block head %}{% if busy %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block content %}
+<div class="settings">
+  <h1>Ajustes</h1>
+  {% if msg %}<p class="notice">{{ msg }}</p>{% endif %}
+  {% if error %}<p class="notice error">{{ error }}</p>{% endif %}
+
+  <section class="panel">
+    <h2>Kindles</h2>
+    {% if kindles %}
+    <ul class="rows">
+      {% for k in kindles %}
+      <li>
+        <span><strong>{{ k.name }}</strong> <span class="muted">{{ k.email }}</span></span>
+        <form method="post" action="/ajustes/kindles/{{ k.id }}/borrar" data-confirm="¿Eliminar {{ k.name }}?">
+          <button class="btn ghost small" type="submit">Quitar</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">Añade la dirección «Send to Kindle» de cada lector de la casa.</p>
+    {% endif %}
+    <form method="post" action="/ajustes/kindles" class="inline-form">
+      <input name="name" placeholder="Nombre (p. ej. Kindle de Ana)" aria-label="Nombre" required>
+      <input name="email" type="email" placeholder="xxxx@kindle.com" aria-label="Correo del Kindle" required>
+      <button class="btn" type="submit">Añadir</button>
+    </form>
+    <details class="help">
+      <summary>¿Dónde encuentro el correo del Kindle?</summary>
+      <ol>
+        <li>Entra en <strong>amazon.es → Gestionar contenido y dispositivos → Preferencias → Configuración de documentos personales</strong>.</li>
+        <li>Copia la dirección <em>@kindle.com</em> de cada dispositivo.</li>
+        <li>En esa misma página, en <strong>Lista de e-mails aprobados</strong>, añade
+          {% if smtp_from %}<code>{{ smtp_from }}</code>{% else %}el correo que pongas en <code>SMTP_FROM</code>{% endif %}.
+          Si no, Amazon descarta los envíos.</li>
+      </ol>
+    </details>
+  </section>
+
+  <section class="panel">
+    <h2>Catálogo</h2>
+    <p class="muted">{{ total_books }} libros · {{ stats.dht_nodes }} nodos DHT conectados</p>
+    {% if sources %}
+    <ul class="rows sources">
+      {% for s in sources %}
+      <li>
+        <div>
+          <strong>{{ s.name or s.infohash[:12] }}</strong>
+          <span class="badge status-{{ s.status }}">
+            {% if s.status == "ready" %}Listo
+            {% elif s.status == "metadata" %}Obteniendo lista de ficheros{% if s.progress %} · {{ s.progress.peers }} conexiones{% endif %}
+            {% elif s.status == "indexing" %}Indexando
+            {% elif s.status == "error" %}Error
+            {% else %}En cola{% endif %}
+          </span>
+          <div class="muted small">
+            {% if s.status == "ready" %}{{ s.num_books }} libros · {{ s.total_size|size }} en total (no se descarga entero){% endif %}
+            {% if s.origin == "feed" %} · añadido por el feed{% endif %}
+          </div>
+          {% if s.error %}<div class="small {% if s.status == 'error' %}error{% else %}muted{% endif %}">{{ s.error }}</div>{% endif %}
+        </div>
+        <div class="row-actions">
+          {% if s.status in ("ready", "error") %}
+          <form method="post" action="/ajustes/fuentes/{{ s.id }}/reindexar"><button class="btn ghost small" type="submit">Reindexar</button></form>
+          {% endif %}
+          <form method="post" action="/ajustes/fuentes/{{ s.id }}/borrar" data-confirm="¿Quitar esta fuente? Los libros que solo estén en ella desaparecerán del buscador.">
+            <button class="btn ghost small" type="submit">Quitar</button>
+          </form>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form method="post" action="/ajustes/fuentes" class="stack-form">
+      <label for="magnet">Añadir un torrent (enlace magnet)</label>
+      <textarea id="magnet" name="magnet" rows="3" placeholder="magnet:?xt=urn:btih:…" required></textarea>
+      <button class="btn" type="submit">Añadir fuente</button>
+    </form>
+    <p class="muted small">Cuando salga una versión nueva del torrent, añádela aquí: los libros repetidos se
+      fusionan y siempre se usa la fuente más reciente. Después puedes quitar la antigua.</p>
+    {% if feed_url %}
+    <form method="post" action="/ajustes/feed">
+      <p class="small">Feed de magnets: <code>{{ feed_url }}</code></p>
+      <button class="btn ghost small" type="submit">Comprobar ahora</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Correo</h2>
+    {% if smtp_ok %}
+    <p>Se envía desde <code>{{ smtp_from }}</code>.</p>
+    <form method="post" action="/ajustes/correo/probar"><button class="btn ghost small" type="submit">Enviarme un correo de prueba</button></form>
+    {% else %}
+    <p class="error">Falta configurar SMTP en el fichero <code>.env</code> para poder enviar al Kindle.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Espacio</h2>
+    <p>Libros descargados en caché: {{ cache_count }} · {{ cache_bytes|size }} de {{ cache_max|size }}.</p>
+    <p class="muted small">Cuando se llena, se borran los que hace más tiempo que nadie pide.</p>
+    <form method="post" action="/ajustes/cache/vaciar" data-confirm="¿Vaciar la caché de libros descargados?">
+      <button class="btn ghost small" type="submit">Vaciar caché</button>
+    </form>
+  </section>
+
+  {% if auth %}
+  <form method="post" action="/logout" class="logout"><button class="btn ghost small" type="submit">Cerrar sesión</button></form>
+  {% endif %}
+</div>
+{% endblock %}

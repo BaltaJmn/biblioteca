@@ -1,0 +1,16 @@
+<li class="card">
+  {% include "_cover.html" %}
+  <div class="meta">
+    <a class="title" href="/libro/{{ b.id }}">{{ b.title }}</a>
+    {% if b.authors %}
+    <span class="author">{% for a in b.authors.split(" & ") %}<a href="/?autor={{ a|urlq }}">{{ a }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</span>
+    {% endif %}
+    {% if b.series %}
+    <a class="series" href="/?serie={{ b.series|urlq }}">{{ b.series }}{% if b.series_index is not none %} · {{ b.series_index|num }}{% endif %}</a>
+    {% endif %}
+    <span class="formats">{% for f in b.formats %}<span class="fmt">{{ f.format }}</span>{% endfor %}</span>
+  </div>
+  <div class="actions">
+    {% include "_actions.html" %}
+  </div>
+</li>

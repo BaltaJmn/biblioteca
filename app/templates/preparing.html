@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Preparando descarga · Biblioteca{% endblock %}
+{% block head %}
+{% if job.state == "done" %}
+<meta http-equiv="refresh" content="0; url=/descargar/{{ job.file_id or file_id }}">
+{% elif job.state != "error" %}
+<meta http-equiv="refresh" content="3">
+{% endif %}
+{% endblock %}
+{% block content %}
+<section class="panel preparing">
+  <h1>{{ job.title }}</h1>
+  {% if job.state == "error" %}
+  <p class="error">{{ job.message }}</p>
+  <a class="btn" href="/descargar/{{ file_id }}">Reintentar</a>
+  {% elif job.state == "done" %}
+  <p>Listo. Si la descarga no empieza, <a href="/descargar/{{ job.file_id or file_id }}">pulsa aquí</a>.</p>
+  {% else %}
+  <p>{{ job.message }}</p>
+  <progress max="1" value="{{ job.progress }}"></progress>
+  <p class="muted small">Esta página se actualiza sola.</p>
+  {% endif %}
+</section>
+{% endblock %}

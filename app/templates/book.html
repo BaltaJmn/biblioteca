@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% set b = book %}
+{% block title %}{{ b.title }} · Biblioteca{% endblock %}
+{% block content %}
+<article class="book">
+  {% set big = true %}{% include "_cover.html" %}
+  <div class="book-info">
+    <h1>{{ b.title }}</h1>
+    {% if b.authors %}
+    <p class="author">{% for a in b.authors.split(" & ") %}<a href="/?autor={{ a|urlq }}">{{ a }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+    {% if b.series %}
+    <p><a class="series" href="/?serie={{ b.series|urlq }}">{{ b.series }}{% if b.series_index is not none %} · libro {{ b.series_index|num }}{% endif %}</a></p>
+    {% endif %}
+    <dl class="facts">
+      {% if b.year %}<div><dt>Año</dt><dd>{{ b.year }}</dd></div>{% endif %}
+      {% if b.publisher %}<div><dt>Editorial</dt><dd>{{ b.publisher }}</dd></div>{% endif %}
+      {% if b.language %}<div><dt>Idioma</dt><dd>{{ b.language|language }}</dd></div>{% endif %}
+      {% if b.isbn %}<div><dt>ISBN</dt><dd>{{ b.isbn }}</dd></div>{% endif %}
+    </dl>
+    <div class="actions big">
+      {% include "_actions.html" %}
+    </div>
+    {% if b.formats|length > 1 %}
+    <p class="other-formats">Otros formatos:
+      {% for f in b.formats[1:] %}
+      <a href="/descargar/{{ f.file_id }}" data-download="{{ f.file_id }}">{{ f.format|upper }} <span class="muted">({{ f.size|size }})</span></a>{% if not loop.last %} · {% endif %}
+      {% endfor %}
+    </p>
+    {% endif %}
+    {% if b.description %}
+    <div class="description">
+      {% for para in b.description.split("\n\n") %}<p>{{ para }}</p>{% endfor %}
+    </div>
+    {% else %}
+    <p class="muted small">La sinopsis y la portada aparecen cuando alguien descarga o envía el libro por primera vez.</p>
+    {% endif %}
+    {% if b.tags %}<p class="tags">{% for t in b.tags.split(", ") %}<a class="chip" href="/?q={{ t|urlq }}">{{ t }}</a>{% endfor %}</p>{% endif %}
+  </div>
+</article>
+{% endblock %}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Biblioteca{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css?v=1">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#8a3b1c">
+  {% block head %}{% endblock %}
+</head>
+<body class="page-{{ page }}">
+  <header class="topbar">
+    <a class="brand" href="/">
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M4 3h3v18H4zm4 2h3v16H8zm4.2-.6 2.9-.8 4.7 17.4-2.9.8z"/></svg>
+      Biblioteca
+    </a>
+    {% if page != "login" %}
+    <nav><a href="/ajustes" {% if page == "settings" %}aria-current="page"{% endif %}>Ajustes</a></nav>
+    {% endif %}
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script id="kindles-data" type="application/json">{{ (kindles or [])|tojson }}</script>
+  <script id="smtp-data" type="application/json">{{ (smtp_ok or false)|tojson }}</script>
+  <script src="/static/app.js?v=1" defer></script>
+</body>
+</html>
