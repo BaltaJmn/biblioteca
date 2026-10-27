@@ -10,8 +10,8 @@ services:
     ports:
       # Solo desde el propio mini PC: desde fuera se entra por Cloudflare (túnel + Access).
       - "127.0.0.1:8080:8080"
-      - "6881:6881/tcp"   # BitTorrent (abrirlo en el router es opcional pero ayuda)
-      - "6881:6881/udp"
+      # Sin 6881 publicado y sin UPnP (TORRENT_UPNP=false en .env, usuario 27-10): no acepta conexiones de fuera ni
+      # pide al router que la abra. Descarga igual, por conexiones salientes.
 
   # Publica la web en https://biblioteca.baltajmn.dev sin abrir puertos en el router.
   # Se activa con COMPOSE_PROFILES=tunnel en el .env.
